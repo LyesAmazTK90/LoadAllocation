@@ -1,0 +1,176 @@
+Quantile-Based Winsorization vs. Fixed Threshold Winsorization
+
+Quantile-Based Winsorization (e.g., using the 1st and 99th percentiles):
+
+    Pros:
+        Automatic Adjustment: The bounds are computed directly from the data, so they automatically adjust if the distribution changes.
+        Robustness: It minimizes the influence of extreme values without needing to “guess” fixed limits.
+    Cons:
+        Data-Dependent: If our synthetic data is not representative of real-world conditions, the computed quantiles may be misleading.
+        Variability: In a skewed distribution, the quantile-based bounds might not reflect realistic operational limits (e.g., a cap that’s too low or too high compared to industry norms).
+
+Fixed Threshold Winsorization:
+
+    Pros:
+        Domain-Specific Control: We can set caps based on historical or business knowledge. For example, since we know that SPOT prices rarely exceed 200 EUR/MWh in practice, we can fix that as an upper bound.
+        Consistency: Fixed thresholds provide consistency across different datasets or over time, which can be useful when benchmarking against real market data.
+    Cons:
+        Rigidity: If the data distribution changes or if our synthetic data is not fully representative, fixed thresholds might not adapt well.
+        Requires Prior Knowledge: We must choose appropriate thresholds up front, which might and should need to be revised once real-world data is available.
+
+Since we don’t have specific industry benchmarks and I want to use the data at hand, I will test both methods. This will allow me to compare the effects and later adjust thresholds when real data becomes available. 
+
+Explanation Recap:
+
+    I have investigated the pros and cons of quantile-based winsorization versus fixed thresholds.
+    Quantile-based automatically adapts to the data distribution but might not reflect external (real-world) expectations.
+    Fixed thresholds use domain knowledge (or data-derived proxies, if no industry benchmarks exist) to enforce consistency, though they are less adaptive.
+
+Implementation:
+
+    The Python module (outlier_handling.py) implements functions to winsorize a Pandas Series and DataFrame.
+    Then we can choose the method ('fixed' or 'quantile') based on the testing and later adjust when real-world data is available.
+
+Customization:
+
+    The sample usage shows how to apply both methods. This module could be integrated into Omya's main pipeline and later tune parameters as necessary.
+
+        The winsorization based on quantiles automatically computed the 1st and 99th percentiles.
+        For "Plant Load (PL)", the maximum value after winsorization is about 116.92 MWh (instead of 666.67), which indicates that the extreme upper 1% has been moderated.
+        For "Power Market Price (SPOT)", the maximum value is about 257.17 EUR/MWh (instead of 295.51).
+
+
+Quantile-based Winsorization Summary:
+
+       Plant Load (PL)  Power Market Price (SPOT)
+count    120892.000000              120903.000000
+mean         42.569768                 128.201469
+std          27.846666                  55.190954
+min           1.722430                   0.109767
+25%          20.246700                  96.379419
+50%          37.638508                 130.757052
+75%          61.559999                 164.034613
+max         116.918407                 257.173772
+
+    Interpretation:
+        The winsorization based on quantiles automatically computed the 1st and 99th percentiles.
+        For "Plant Load (PL)", the maximum value after winsorization is about 116.92 MWh (instead of 666.67), which indicates that the extreme upper 1% has been moderated.
+        For "Power Market Price (SPOT)", the maximum value is about 257.17 EUR/MWh (instead of 295.51).
+Fixed Threshold Winsorization Summary:
+
+       Plant Load (PL)  Power Market Price (SPOT)
+count    120892.000000              120903.000000
+mean         42.223926                 125.975501
+std          27.069315                  51.369621
+min           0.004434                  -2.618086
+25%          20.246700                  96.379419
+50%          37.638508                 130.757052
+75%          61.559999                 164.034613
+max         100.000000                 200.000000
+
+    Interpretation:
+        Here, the fixed thresholds were applied.
+        "Plant Load (PL)" is capped at 100 MWh, and "Power Market Price (SPOT)" is capped at 200 EUR/MWh.
+        The mean and standard deviation slightly differ from the quantile-based version due to the hard caps.
+        The minimum for SPOT prices remains negative (-2.618086), meaning we didn’t adjust lower bounds with fixed thresholds; 
+        you might consider setting a lower bound (e.g., 0) if negative values are not realistic.
+
+Final Considerations
+
+    Real-World Comparison:
+    While our thresholds here (100 for PL and 200 for SPOT) are based solely on our synthetic data, in practice we would compare these with historical benchmarks.
+    For instance, if real SPOT prices in our market rarely exceed 150 EUR/MWh, we would lower the cap accordingly.
+
+    Customizability:
+    Our code is designed to easily switch between quantile-based and fixed threshold methods. This flexibility lets us experiment with different approaches and adjust to real data when available.
+
+    import pandas as pd
+import numpy as np
+
+def winsorize_series(series, lower_bound=None, upper_bound=None, lower_quantile=0.01, upper_quantile=0.99):
+    """
+    Winsorizes a Pandas Series by capping its values.
+    
+    Parameters:
+      series (pd.Series): The data series to winsorize.
+      lower_bound (float): Fixed lower bound; if None, computed from lower_quantile.
+      upper_bound (float): Fixed upper bound; if None, computed from upper_quantile.
+      lower_quantile (float): Quantile to compute lower bound if fixed lower_bound is None.
+      upper_quantile (float): Quantile to compute upper bound if fixed upper_bound is None.
+    
+    Returns:
+      pd.Series: Winsorized series.
+    """
+    if lower_bound is None:
+        lower_bound = series.quantile(lower_quantile)
+    if upper_bound is None:
+        upper_bound = series.quantile(upper_quantile)
+    winsorized = series.clip(lower=lower_bound, upper=upper_bound)
+    return winsorized
+
+def winsorize_dataframe(df4, columns, method='fixed', lower_quantile=0.01, upper_quantile=0.99, fixed_bounds=None):
+    """
+    Winsorizes specified columns in a DataFrame.
+    
+    Parameters:
+      df (pd.DataFrame): The DataFrame containing data.
+      columns (list): List of column names to winsorize.
+      method (str): 'fixed' or 'quantile'. 
+          - 'fixed' uses fixed_bounds; 'quantile' uses quantile-based bounds.
+      lower_quantile (float): Lower quantile for quantile-based winsorization.
+      upper_quantile (float): Upper quantile for quantile-based winsorization.
+      fixed_bounds (dict): Dictionary with keys as column names and values as (lower_bound, upper_bound) tuples.
+    
+    Returns:
+      pd.DataFrame: DataFrame with winsorized columns.
+    """
+    df_copy = df4.copy()
+    for col in columns:
+        if method == 'fixed':
+            if fixed_bounds is None or col not in fixed_bounds:
+                raise ValueError(f"Fixed bounds for column '{col}' not provided.")
+            lb, ub = fixed_bounds[col]
+            df_copy[col] = winsorize_series(df_copy[col], lower_bound=lb, upper_bound=ub)
+        elif method == 'quantile':
+            df_copy[col] = winsorize_series(df_copy[col], lower_quantile=lower_quantile, upper_quantile=upper_quantile)
+        else:
+            raise ValueError("Method must be 'fixed' or 'quantile'.")
+    return df_copy
+
+if __name__ == "__main__":
+    # Load data from your synthetic dataset (update the file paths as needed)
+    df4 = pd.read_csv('../Data/df4.csv')
+    
+    # Convert numeric columns from objects to floats as necessary
+    numeric_cols = [
+        "Plant Load (PL)", "Generation behind the Meter (GBM)", "Net Plant Load (NPL)",
+        "Hedged Base Band (HBB)", "Hedged Base Band Cost (HBC)",
+        "Power Market Price (SPOT)", "Additional Power Price (Add.)", "SPOT + Add.Price"
+    ]
+    for col in numeric_cols:
+        df4[col] = pd.to_numeric(df4[col], errors='coerce')
+    
+    # Apply quantile-based winsorization (using 1st and 99th percentiles)
+    df_quantile = winsorize_dataframe(df4, columns=["Plant Load (PL)", "Power Market Price (SPOT)"],
+                                      method='quantile', lower_quantile=0.01, upper_quantile=0.99)
+    
+    # Apply fixed threshold winsorization
+    # For our synthetic data, let's assume we cap 'Plant Load (PL)' at 100 and 'SPOT' at 200.
+    
+    fixed_bounds = {
+        "Plant Load (PL)": (df4["Plant Load (PL)"].min(), 100),
+        "Power Market Price (SPOT)": (df4["Power Market Price (SPOT)"].min(), 200)
+    }
+    df_fixed = winsorize_dataframe(df4, columns=["Plant Load (PL)", "Power Market Price (SPOT)"],
+                                   method='fixed', fixed_bounds=fixed_bounds)
+    
+    # Output summary statistics for comparison
+    print("Quantile-based Winsorization Summary:")
+    print(df_quantile[["Plant Load (PL)", "Power Market Price (SPOT)"]].describe())
+    
+    print("\nFixed Threshold Winsorization Summary:")
+    print(df_fixed[["Plant Load (PL)", "Power Market Price (SPOT)"]].describe())
+    
+    # Save winsorized DataFrames if needed
+    df_quantile.to_csv('../Data/df_quantile_winsorized.csv', index=False)
+    df_fixed.to_csv('../Data/df_fixed_winsorized.csv', index=False)
